@@ -11,27 +11,29 @@ use std::{time, thread};
 
 struct Player {
   layers: Vec<GridLayer>,
+  sink: Sink,
   currentTime: usize,
   currentLayerIndex: usize,
   tempo: u32,
   cursor: (usize, usize),
   cursorVisible: bool,
-  beat: u32,
+  beat: usize,
   msecInBeat: u32,
   shouldExit: bool,
 }
 
-impl Default for Player {
-  fn default() -> Self {
+impl Player {
+  fn for_sink(sink: Sink) -> Self {
     Self {
       layers: vec!(GridLayer::default(),
                    GridLayer::default(),
                    GridLayer::default(),
                    GridLayer::default(),
                    GridLayer::default()),
+      sink,
       currentTime: 0,
       currentLayerIndex: 0,
-      tempo: 100,
+      tempo: 200,
       cursor: (3, 5),
       cursorVisible: true,
       beat: 0,
@@ -39,13 +41,10 @@ impl Default for Player {
       shouldExit: false
     }
   }
-}
 
-impl Player {
   fn draw<W: Write>(&mut self, out: &mut RawTerminal<W>) {
     let layer = &self.layers[self.currentLayerIndex];
     write!(out, "{}", termion::cursor::Hide);
-    //write!(out, "{}", termion::clear::All);
 
     for (n, on) in layer.notes.iter().enumerate() {
       if n % 16 == 0 {
@@ -54,6 +53,8 @@ impl Player {
       }
       if self.cursorVisible && n % 16 == self.cursor.0 && n / 16 == self.cursor.1 {
         write!(out, "{}", termion::color::Bg(termion::color::Rgb(96, 96, 96)));
+      } else if n % 16 == self.beat {
+        write!(out, "{}", termion::color::Bg(termion::color::Rgb(96, 96, 128)));
       }
       if *on {
         write!(out, "[]");
@@ -62,6 +63,8 @@ impl Player {
       }
       write!(out, "{}", termion::color::Bg(termion::color::Reset));
     }
+
+    write!(out, "{}", termion::cursor::Goto(1, 18));
   }
 
   fn handleEvent<W: Write>(&mut self, event: Event, stdout: &mut RawTerminal<W>) {
@@ -77,11 +80,6 @@ impl Player {
 
       Event::Key(Key::Char('\n')) => self.toggleNote(),
 
-      //Event::Key(Key::Char(c)) => write!(stdout, "{}", c).unwrap(),
-      //Event::Key(Key::Alt(c)) => write!(stdout, "^{}", c).unwrap(),
-      //Event::Key(Key::Ctrl(c)) => write!(stdout, "*{}", c).unwrap(),
-      //Event::Key(Key::Esc) => write!(stdout, "ESC").unwrap(),
-      //Event::Key(Key::Backspace) => write!(stdout, "×").unwrap(),
       Event::Mouse(MouseEvent::Press(_, x, y)) =>
         if (x - 1) / 2 <= 16 && y <= 16 {
           self.cursor = (((x - 1) / 2) as usize, (y - 1) as usize);
@@ -95,6 +93,33 @@ impl Player {
     let mut layer = &mut self.layers[self.currentLayerIndex];
     let n = self.cursor.0 + self.cursor.1 * 16;
     layer.notes[n] = !layer.notes[n];
+  }
+
+  fn update(&mut self, dt: u32) {
+    self.msecInBeat += dt;
+
+    // The total milliseconds in a minute divided by the bpm
+    if self.msecInBeat >= (60000 / self.tempo) {
+      self.msecInBeat = 0;
+      self.beat = (self.beat + 1) % 16;
+      self.playNotes();
+    }
+  }
+
+  fn playNotes(&self) {
+    let (mut controller, mixer) = rodio::dynamic_mixer::mixer(16, 48000);
+
+    for layer in self.layers.iter() {
+      for row in 0..16 {
+        if layer.notes[self.beat + row * 16] {
+          let freq: f32 = f32::powf(1.0595, (16.0 - row as f32 - 8.0) as f32) * 440.0;
+          let source = SineWave::new(freq).take_duration(Duration::from_millis(60000 / self.tempo as u64)).amplify(0.30);
+          controller.add(source);
+        }
+      }
+    }
+
+    self.sink.append(mixer);
   }
 }
 
@@ -115,40 +140,27 @@ fn main() {
   let mut stdout = MouseTerminal::from(stdout().into_raw_mode().expect("Unable to enter raw mode; try a different terminal?"));
   let mut stdin = async_stdin();
 
-  let mut player = Player::default();
+  let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+  let sink = Sink::try_new(&stream_handle).unwrap();
+
+  let mut player = Player::for_sink(sink);
   let mut n = 0;
 
   write!(stdout, "{}", termion::clear::All);
 
   loop {
     player.draw(&mut stdout);
-    stdout.flush().unwrap();
-
-    write!(stdout, "{}{}", termion::cursor::Goto(1, 20), n);
-    n += 1;
-
-    write!(stdout, "{}", termion::cursor::Goto(1, 18));
-    stdout.flush().unwrap();
 
     for c in (&mut stdin).events() {
       player.handleEvent(c.unwrap(), &mut stdout);
     }
+
     if player.shouldExit { break }
     thread::sleep(Duration::from_millis(25));
+    player.update(25);
   }
 
   write!(stdout, "{}", termion::cursor::Show).unwrap();
-
-  let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-  let sink = Sink::try_new(&stream_handle).unwrap();
-
-  // Add a dummy source of the sake of the example.
-  let source = SineWave::new(440.0).take_duration(Duration::from_secs_f32(0.25)).amplify(0.20);
-  //sink.append(source);
-
-  // The sound plays in a separate thread. This call will block the current thread until the sink
-  // has finished playing all its queued sounds.
-  sink.sleep_until_end();
 }
 
 fn drawScreen() {
