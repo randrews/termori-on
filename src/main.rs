@@ -42,9 +42,10 @@ impl Default for Player {
 }
 
 impl Player {
-  fn draw<W: Write>(&self, out: &mut RawTerminal<W>) {
+  fn draw<W: Write>(&mut self, out: &mut RawTerminal<W>) {
     let layer = &self.layers[self.currentLayerIndex];
-    write!(out, "{}{}", termion::cursor::Hide, termion::clear::All);
+    write!(out, "{}", termion::cursor::Hide);
+    //write!(out, "{}", termion::clear::All);
 
     for (n, on) in layer.notes.iter().enumerate() {
       if n % 16 == 0 {
@@ -67,27 +68,33 @@ impl Player {
     match event {
       Event::Key(Key::Ctrl('c')) |
       Event::Key(Key::Ctrl('d')) |
-      Event::Key(Key::Ctrl('q')) => {
-        self.shouldExit = true;
-      },
-      Event::Key(Key::Left) => {
-        if self.cursor.0 > 0 {
-          self.cursor.0 -= 1;
-          write!(stdout, "blah!");
-        }
-      },
-      Event::Key(Key::Right) => if self.cursor.0 < 15 { self.cursor = (self.cursor.0 + 1, self.cursor.1) },
-      Event::Key(Key::Up) => if self.cursor.1 > 0 { self.cursor.1 -= 1 },
-      Event::Key(Key::Down) => if self.cursor.1 < 15 { self.cursor.1 += 1 },
+      Event::Key(Key::Ctrl('q')) => self.shouldExit = true,
+
+      Event::Key(Key::Left) => if self.cursor.0 > 0 { self.cursor.0 -= 1; },
+      Event::Key(Key::Right) => if self.cursor.0 < 15 { self.cursor.0 += 1; },
+      Event::Key(Key::Up) => if self.cursor.1 > 0 { self.cursor.1 -= 1; },
+      Event::Key(Key::Down) => if self.cursor.1 < 15 { self.cursor.1 += 1; },
+
+      Event::Key(Key::Char('\n')) => self.toggleNote(),
 
       //Event::Key(Key::Char(c)) => write!(stdout, "{}", c).unwrap(),
       //Event::Key(Key::Alt(c)) => write!(stdout, "^{}", c).unwrap(),
       //Event::Key(Key::Ctrl(c)) => write!(stdout, "*{}", c).unwrap(),
       //Event::Key(Key::Esc) => write!(stdout, "ESC").unwrap(),
       //Event::Key(Key::Backspace) => write!(stdout, "×").unwrap(),
-      //Event::Mouse(MouseEvent::Press(_, x, y)) => write!(stdout, "x: {}, y: {}", x, y).unwrap(),
+      Event::Mouse(MouseEvent::Press(_, x, y)) =>
+        if (x - 1) / 2 <= 16 && y <= 16 {
+          self.cursor = (((x - 1) / 2) as usize, (y - 1) as usize);
+          self.toggleNote();
+        }
       _ => {}
     }
+  }
+
+  fn toggleNote(&mut self) {
+    let mut layer = &mut self.layers[self.currentLayerIndex];
+    let n = self.cursor.0 + self.cursor.1 * 16;
+    layer.notes[n] = !layer.notes[n];
   }
 }
 
@@ -110,6 +117,8 @@ fn main() {
 
   let mut player = Player::default();
   let mut n = 0;
+
+  write!(stdout, "{}", termion::clear::All);
 
   loop {
     player.draw(&mut stdout);
