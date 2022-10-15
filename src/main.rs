@@ -20,6 +20,7 @@ struct Player {
   beat: usize,
   msecInBeat: u32,
   shouldExit: bool,
+  prevSize: (u16, u16),
 }
 
 impl Player {
@@ -38,18 +39,26 @@ impl Player {
       cursorVisible: true,
       beat: 0,
       msecInBeat: 0,
-      shouldExit: false
+      shouldExit: false,
+      prevSize: (0, 0)
     }
   }
 
   fn draw<W: Write>(&mut self, out: &mut RawTerminal<W>) {
     let layer = &self.layers[self.currentLayerIndex];
     write!(out, "{}", termion::cursor::Hide);
+    let (w, h) = termion::terminal_size().unwrap();
+
+    // Clear the whole screen and redraw if we changed size
+    if (w, h) != self.prevSize {
+      write!(out, "{}", termion::clear::All);
+      self.prevSize = (w, h)
+    }
 
     for (n, on) in layer.notes.iter().enumerate() {
       if n % 16 == 0 {
         let row = (n / 16) as u16;
-        write!(out, "{}", termion::cursor::Goto(1, row + 1));
+        write!(out, "{}", termion::cursor::Goto(self.boardLeft(), row + self.boardTop()));
       }
       if self.cursorVisible && n % 16 == self.cursor.0 && n / 16 == self.cursor.1 {
         write!(out, "{}", termion::color::Bg(termion::color::Rgb(96, 96, 96)));
@@ -81,13 +90,19 @@ impl Player {
       Event::Key(Key::Char('\n')) => self.toggleNote(),
 
       Event::Mouse(MouseEvent::Press(_, x, y)) =>
-        if (x - 1) / 2 <= 16 && y <= 16 {
-          self.cursor = (((x - 1) / 2) as usize, (y - 1) as usize);
+        if (x - self.boardLeft()) / 2 <= 16 && y - self.boardTop() <= 16 {
+          self.cursor = (((x - self.boardLeft()) / 2) as usize, (y - self.boardTop()) as usize);
           self.toggleNote();
         }
       _ => {}
     }
   }
+
+  fn boardLeft(&self) -> u16 {
+    (self.prevSize.0 / 2) - 16 + 1
+  }
+
+  fn boardTop(&self) -> u16 { 2 }
 
   fn toggleNote(&mut self) {
     let mut layer = &mut self.layers[self.currentLayerIndex];
