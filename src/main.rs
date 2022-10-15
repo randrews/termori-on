@@ -109,10 +109,13 @@ impl Player {
   fn playNotes(&self) {
     let (mut controller, mixer) = rodio::dynamic_mixer::mixer(16, 48000);
 
+    let noteNums = [-12, -10, -9, -7, -5, -4, -2, 0, 2, 3, 5, 7, 8, 10, 12, 14];
+
     for layer in self.layers.iter() {
       for row in 0..16 {
         if layer.notes[self.beat + row * 16] {
-          let freq: f32 = f32::powf(1.0595, (16.0 - row as f32 - 8.0) as f32) * 440.0;
+          let noteNum = noteNums[15 - row] as f32;
+          let freq: f32 = f32::powf(1.0595, noteNum) * 440.0;
           let source = SineWave::new(freq).take_duration(Duration::from_millis(60000 / self.tempo as u64)).amplify(0.30);
           controller.add(source);
         }
